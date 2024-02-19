@@ -1,0 +1,362 @@
+#########################################################################
+#
+# made by Marshaw
+#
+# excel的起始日期是1899-12-30
+#
+# 最新更新：26/12/2023
+# 举报异常资金处理
+#
+#######################################################################
+
+rm(list=ls())
+
+library(readxl)
+library(dplyr)
+library(openxlsx)
+library(tidyr)
+
+#######################################.   params.  #################################################################################################################################
+#未来随时需要加上或删除名字
+names_list <- c('Jackson Zhao','Theo Zhang', 'Prince','Seven','Fruehling','future','Hale','Wenty','Jenny','Loki Luo', 'Marshaw', 'risk_arthur'
+                , 'theozhang', 'jacksonzhao', 'loki.luo', 'wenty', 'seven', 'gengruimeng', 'cheshicheng', 'helepeng') ##需要统计的名字
+
+wb <- loadWorkbook("Downloads/现存标签.xlsx") #现存标签
+wb1 <- loadWorkbook("Downloads/标签添加明细.xlsx") ##标签添加明细
+wb2 <- loadWorkbook("Downloads/举报异常资金(全部)20240209095420.xlsx") ##添加的标签
+#file_path <- "Downloads/小时工作量统计.xlsx" ##写入的档案名称
+
+############################################。资料导入。 ##################################################################################################################################################
+# 获取 Excel 文件中的所有 sheet 名称
+sheet_names <- names(wb)
+
+data_now <- NULL
+for (sheet_name in 1:length(sheet_names)) {
+  rawdata1 <- read.xlsx(wb, sheet = sheet_name)  # 读取当前 sheet 的数据
+  rawdata1[,"打标时间"]<- as.POSIXct(rawdata1[,"打标时间"] %>% unlist() %>% as.numeric()*86400, origin = "1899-12-30", tz = "UTC") %>% as.data.frame()
+  data_now <- rbind(data_now,rawdata1)
+}
+
+sheet_names <- names(wb1)
+data_withtag <- NULL
+# 循环读取每个 sheet 的内容
+for (sheet_name in 1:length(sheet_names)) {
+  rawdata1 <- read.xlsx(wb1, sheet = sheet_name)  # 读取当前 sheet 的数据
+  rawdata1[,"打标时间"]<- as.POSIXct(rawdata1[,"打标时间"] %>% unlist() %>% as.numeric()*86400, origin = "1899-12-30", tz = "UTC") %>% as.data.frame()
+  data_withtag <- rbind(data_withtag,rawdata1)
+}
+
+sheet_names <- names(wb2) #wb2 = "Downloads/举报异常资金12月1日-12月26日审批.xlsx")
+all_data <- NULL
+# 循环读取每个 sheet 的内容
+for (sheet_name in 1:length(sheet_names)) {
+  
+  rawdata1 <- read.xlsx(wb2, sheet = sheet_name)  # 读取当前 sheet 的数据
+  colname <- rawdata1[1,]
+  rawdata1 <- rawdata1[-1,]
+  colnames(rawdata1) <- colname
+
+  rawdata1[,"发起时间"]<- as.POSIXct(rawdata1[,"发起时间"] %>% unlist() %>% as.numeric()*86400, origin = "1899-12-30", tz = "UTC") %>% as.data.frame()
+  data1 <- rawdata1[,c("申请编号","申请状态","发起时间","历史审批人","历史办理人","当前处理人","举报人/受害者的UID",
+                       "被举报账号/需处置账号的UID","举报类型","风控二审-实际处置的账号UID","风控二审-实际处置方式",
+                       "风控二审-追溯资金补充处置账户")]
+  all_data <- rbind(all_data,data1)
+
+}
+#write.xlsx(all_data, "Downloads/12月1日-12月26日举报异常资金.xlsx", digits = 2)
+rm(colname, data1, rawdata1)
+
+data_check <- data_now  # 读取当前 sheet 的数据
+data_check[,"打标时间"]<- as.POSIXct(data_check[,"打标时间"] %>% unlist() %>% as.numeric()*86400, origin = "1899-12-30", tz = "UTC") %>% as.data.frame()
+duplicate_rows <- duplicated(all_data$申请编号)
+unique_alldata <- subset(all_data, !duplicate_rows) ##举报异常资金审批已经去重
+unique_alldata <- unique_alldata %>% select(-c(历史办理人,历史审批人,当前处理人))
+
+#write.xlsx(unique_alldata, "Downloads/12月1日-12月26日举报异常资金去重.xlsx", digits = 2)
+id_count_one <- data_check[,1]
+############################################。处理合并现存标签。 ##################################################################################################################################################
+
+##处理合并现存标签
+data_check_account_one <- NULL
+for (i in 1:length(id_count_one)) {
+  cat(i,"/",length(id_count_one), "\n")
+  id <- id_count_one[i]
+  rows_with_value <- unique_alldata[apply(unique_alldata, 1, function(row) any(grepl(id, row))), ] #这个是举报资金异常
+  n <- count(rows_with_value)
+  rows_with_value1 <- data_check[apply(data_check, 1, function(row) any(grepl(id, row))), ] #这个是现存标签
+  # 使用replicate()函数复制数据框，并将其合并
+  num_replications <- nrow(rows_with_value)  # 想要重复合并的次数
+  combined_df <- do.call(rbind, replicate(num_replications, rows_with_value1, simplify = FALSE))
+  combined_df <- combined_df[,c(1:6)]#来自rows_with_value1
+  data_need <-  cbind(combined_df, rows_with_value)  
+  data_check_account_one <- rbind(data_check_account_one, data_need)  
+  
+}
+not_selected_ids <- setdiff(id_count_one, data_check_account_one$用户UID)
+data_not_selected <- data_now[data_now$用户UID %in% not_selected_ids,]
+# 使用正则表达式提取审批编号
+ID_beizhu <- gregexpr("202\\d+", data_not_selected$备注)
+ID_beizhu <- regmatches(data_not_selected$备注, ID_beizhu)
+ID_beizhu_cleaned <- sapply(ID_beizhu, function(x) substr(x, 1, 12)) %>% as.data.frame()
+
+if (nrow(ID_beizhu_cleaned)>0) {
+  colnames(ID_beizhu_cleaned) <- "备注里的审批编号"
+  data_not_selected <- cbind(data_not_selected, ID_beizhu_cleaned)
+
+}
+
+
+rm(combined_df, data_need,n,rows_with_value,rows_with_value1)
+n <- unique(data_check_account_one[,1])
+#现存标签不用去重，不去重才是对的
+data_check_account_one$二级标签 <- sub("被盗/被诈骗问题资金流入","被盗",data_check_account_one$二级标签)
+data_check_account_one$二级标签 <- sub("待账户任意一笔充币来源-提币平台提币记录（用户冻结）","被盗希望冻结",data_check_account_one$二级标签)
+data_check_account_one$二级标签 <- sub("错充资产建议退回","错充",data_check_account_one$二级标签)
+data_check_account_one$举报类型 <- sub("被盗/被诈骗/问题资金流入","被盗",data_check_account_one$举报类型)
+data_check_account_one$举报类型 <- sub("用户被盗希望冻结自己账号（仅限用户丧失账号所有权的情况下，否则请引导用户自行冻结）",
+                                   "被盗希望冻结",data_check_account_one$举报类型)
+data_check_account_one$举报类型 <- sub("用户A错误充值给用户B","错充",data_check_account_one$举报类型)
+check_tag <- data_check_account_one$二级标签 == data_check_account_one$举报类型
+data_check_account_one <- cbind(data_check_account_one,check_tag)
+#write.xlsx(data_check_account_one, "Downloads/12月1日-12月26日举报异常资金和现贴标签没去重.xlsx", digits = 2)
+data_check_account_one <- data_check_account_one %>% select(-c(用户ID,一级标签,所在域)) ##data_check_account_one是所有资料
+n <- ncol(data_check_account_one)
+colnames(data_check_account_one)[n] <- "举报类型和现存标签二级标签检查"
+
+############################################。查看举报人有没有贴错标签。 ##################################################################################################################################################
+##data_check_account是扣掉被盗希望冻结的，要看看举报人有没有被贴到标签
+data_check_account <- subset(data_check_account_one, !grepl("被盗希望冻结", 二级标签))
+id_count_one <- data_check_account$`举报人/受害者的UID`
+id_jubao_check <- data_check_account$`举报人/受害者的UID` %in% data_check_account$用户UID  
+data_check_account <- cbind(data_check_account,id_jubao_check)
+subset_check_account <- subset(data_check_account, id_jubao_check == TRUE)
+n <- ncol(subset_check_account)
+colnames(subset_check_account)[n] <- "举报人误贴标签"
+
+duplicate_rows <- data_check_account_one[duplicated(data_check_account_one$用户UID) | duplicated(data_check_account_one$用户UID, fromLast = TRUE), ]
+
+'is_in_col18 <- data_check_account_one$申请编号 == data_check_account_one$备注的审批号
+data_check_account_one <- cbind(data_check_account_one, is_in_col18)
+n <- ncol(data_check_account_one)
+colnames(data_check_account_one)[n] <- "审批编号是否在备注内"
+subset2 <- subset(data_check_account_one, 审批编号是否在备注内 == FALSE) #2.备注错误添加对应审批编号'
+
+
+# 使用 dplyr 包的 filter() 函数筛选出需要保留的行
+subset5 <- data_check_account_one %>%
+  group_by(用户UID) %>%
+  filter(!("审批中" %in% 申请状态)) ##把资料以用户uid来分组，只要出现“审批中”就直接删除全部相关uid的资料，只留下完全没有“审批中”的资料
+
+filtered_data1 <- subset5 %>%
+  group_by(用户UID) %>%
+  filter(n() > 1) ##只留下有重复uid的资料
+
+##只有一个审批且不属于审批中的UID
+
+subset5 <- subset5 %>% group_by((用户UID)) %>% filter(n() == 1) ##处理中
+subset5 <- subset5[order(subset5$用户UID),]
+
+# 创建一个 Excel 工作簿
+wb <- createWorkbook()
+
+addWorksheet(wb, "举报异常资金和现贴标签全资料")
+writeData(wb, "举报异常资金和现贴标签全资料", data_check_account_one)
+
+addWorksheet(wb, "误对举报人上标签")
+writeData(wb, "误对举报人上标签", subset_check_account)
+
+addWorksheet(wb, "多个审批跟进账号")
+writeData(wb, "多个审批跟进账号", duplicate_rows)
+
+addWorksheet(wb, "多个审批跟进账号(不包含审批中)")
+writeData(wb, "多个审批跟进账号(不包含审批中)", filtered_data1)
+
+addWorksheet(wb, "未匹配审批跟进的标签添加明细")
+writeData(wb, "未匹配审批跟进的标签添加明细", data_not_selected)
+
+addWorksheet(wb, "未匹配审批中状态跟进账号")
+writeData(wb, "未匹配审批中状态跟进账号", subset5)
+
+'addWorksheet(wb, "备注内错误添加对应审批编号")
+writeData(wb, "备注内错误添加对应审批编号", subset2)'
+
+# 保存 Excel 文件
+date_today <- format(Sys.Date(),"%Y%m%d")
+name2 <- paste("Downloads/现存标签统计比对",date_today,".xlsx")
+saveWorkbook(wb, name2, overwrite = TRUE)
+
+############################################。处理合并标签添加明细。 ##################################################################################################################################################
+##总共有四个项目要做
+#1.与审批中的举报类型比对，检查人选二级标签错误的话，筛出来
+#2.标签备注和审批编号进行比对，检查人审添加备注时是否添加对应审批编号无误。（也会有一个账号同时被多笔审批举报的情况，这种帮忙标记一下）
+#3.检查人审是否误对举报人账号添加标签
+#4.检查人审是否有对被举报人添加标签
+
+#data_withtag <- read_xlsx("Downloads/举报异常资金12月1日-12月26日标签添加明细.xlsx")
+
+id_count_one <- unique(data_withtag[,1] %>% as.data.frame())
+
+##处理合并标签添加明细
+data_check_mingxi <- NULL
+for (i in 1:nrow(id_count_one)) {
+  cat(i,"/",nrow(id_count_one), "\n")
+  id <- id_count_one[i,]
+  rows_with_value <- unique_alldata[apply(unique_alldata, 1, function(row) any(grepl(id, row))), ] #这个是举报资金异常
+  n <- count(rows_with_value)
+  rows_with_value1 <- data_withtag[apply(data_withtag, 1, function(row) any(grepl(id, row))), ] #这个是现存标签
+  # 使用replicate()函数复制数据框，并将其合并
+  num_replications <- nrow(rows_with_value)  # 想要重复合并的次数
+  combined_df <- do.call(rbind, replicate(num_replications, rows_with_value1, simplify = FALSE))
+  data_need <-  cbind(combined_df, rows_with_value)  
+  data_check_mingxi <- rbind(data_check_mingxi, data_need) 
+  
+}
+rm(n, rows_with_value, rows_with_value1, combined_df)
+not_selected_ids <- setdiff(id_count_one$., data_check_mingxi$用户uid)
+data_not_selected <- data_withtag[data_withtag$用户uid %in% not_selected_ids,]
+# 使用正则表达式提取审批编号
+ID_beizhu <- gregexpr("202\\d+", data_not_selected$备注)
+ID_beizhu <- regmatches(data_not_selected$备注, ID_beizhu)
+ID_beizhu_cleaned <- sapply(ID_beizhu, function(x) substr(x, 1, 12)) %>% as.data.frame()
+
+colnames(ID_beizhu_cleaned) <- "备注里的审批编号"
+data_not_selected <- cbind(data_not_selected, ID_beizhu_cleaned)
+
+data_check_mingxi <- bind_rows(data_check_mingxi, data_not_selected)
+
+data_check_mingxi <- data_check_mingxi %>% select(-c(用户id,所在域,一级标签))
+check_unique <- paste(data_check_mingxi$用户uid,data_check_mingxi$备注,data_check_mingxi$申请编号, sep = "")
+data_check_mingxi <- cbind(check_unique, data_check_mingxi)
+data_check_mingxi <- unique(data_check_mingxi)
+data_check_mingxi <- data_check_mingxi[,c(2:ncol(data_check_mingxi))]
+#1.与审批中的举报类型比对，检查人选二级标签错误的话，筛出来
+##改标签名
+data_check_mingxi$二级标签 <- sub("被盗/被诈骗问题资金流入","被盗",data_check_mingxi$二级标签)
+data_check_mingxi$二级标签 <- sub("待账户任意一笔充币来源-提币平台提币记录（用户冻结）","被盗希望冻结",data_check_mingxi$二级标签)
+data_check_mingxi$二级标签 <- sub("错充资产建议退回","错充",data_check_mingxi$二级标签)
+data_check_mingxi$举报类型 <- sub("被盗/被诈骗/问题资金流入","被盗",data_check_mingxi$举报类型)
+data_check_mingxi$举报类型 <- sub("用户被盗希望冻结自己账号（仅限用户丧失账号所有权的情况下，否则请引导用户自行冻结）",
+                                   "被盗希望冻结",data_check_mingxi$举报类型)
+data_check_mingxi$举报类型 <- sub("用户A错误充值给用户B","错充",data_check_mingxi$举报类型)
+check_tag <- data_check_mingxi$二级标签 == data_check_mingxi$举报类型
+data_check_mingxi <- cbind(data_check_mingxi,check_tag)
+n <- ncol(data_check_mingxi)
+colnames(data_check_mingxi)[n] <- "举报类型和现存标签二级标签检查"
+#data_check_mingxi <- data_check_mingxi %>% arrange(举报类型和现存标签二级标签检查)
+
+#2.标签备注和审批编号进行比对，检查人审添加备注时是否添加对应审批编号无误。（也会有一个账号同时被多笔审批举报的情况，这种帮忙标记一下）
+###从备注的栏位提取所有审批号，2023起头
+# 提取数字序列
+matches <- gregexpr("202\\d+", data_check_mingxi$备注)
+# 找到匹配的数字列
+matches <- regmatches(data_check_mingxi$备注, matches)
+result_df <- data.frame()
+for (match in matches) {
+  # 如果当前是 character(0)，即没有匹配到数字，则创建单行数据框
+  if (length(match) == 0) {
+    match_df <- data.frame(match = NA, stringsAsFactors = FALSE)
+  } else if (length(match) > 1) {
+    # 如果当前元素包含多个匹配项，则以逗号分隔，并创建多行
+    match_df <- data.frame(match = paste(match, collapse = ", "), stringsAsFactors = FALSE)
+  } else {
+    # 否则，创建单行数据框
+    match_df <- data.frame(match = match, stringsAsFactors = FALSE)
+  }
+  
+  # 将当前匹配项添加到结果数据框
+  result_df <- rbind(result_df, match_df)
+}
+
+##
+colnames(result_df) <- "备注的审批号"
+data_check_mingxi <- cbind(data_check_mingxi,result_df)
+
+# 使用 grepl() 函数检查 Col8 中的元素是否在 Col18 中出现
+data_check_mingxi <- data_check_mingxi %>%  separate_rows(备注的审批号, sep = ",\\s*")
+#is_in_col18 <- sapply(data_check_mingxi$申请编号, function(x) any(grepl(x, data_check_mingxi$备注的审批号)))
+is_in_col18 <- data_check_mingxi$申请编号 == data_check_mingxi$备注的审批号
+#is_in_col18 <- data_check_mingxi$申请编号 %in% data_check_mingxi$备注的审批号
+data_check_mingxi <- cbind(data_check_mingxi, is_in_col18)
+
+n <- ncol(data_check_mingxi)
+colnames(data_check_mingxi)[n] <- "审批编号是否在备注内"
+
+#3.检查人审是否误对举报人账号添加标签
+check_jubao <- data_check_mingxi$`举报人/受害者的UID` %in% data_check_mingxi$用户uid
+data_check_mingxi <- cbind(data_check_mingxi, check_jubao)
+n <- ncol(data_check_mingxi)
+colnames(data_check_mingxi)[n] <- "举报人贴错标签"
+
+#4.检查人审是否有对被举报人添加标签
+#bug
+check_jubao1 <- sapply(data_check_mingxi$用户uid, function(x) any(grepl(x, data_check_mingxi$`风控二审-实际处置的账号UID`)))
+check_jubao2 <- sapply(data_check_mingxi$用户uid, function(x) any(grepl(x, data_check_mingxi$`风控二审-追溯资金补充处置账户`)))
+
+#check_jubao1 <- data_check_mingxi$用户uid %in% data_check_mingxi$`风控二审-实际处置的账号UID`
+data_check_mingxi <- cbind(data_check_mingxi, check_jubao1, check_jubao2)
+n <- ncol(data_check_mingxi)
+m <- n-1
+colnames(data_check_mingxi)[m] <- "是否有对被举报人贴标签"
+colnames(data_check_mingxi)[n] <- "UID是否在追溯资金处置账户内"
+#1.与审批中的举报类型比对，检查人选二级标签错误的话，筛出来 要FALSE
+#2.标签备注和审批编号进行比对，检查人审添加备注时是否添加对应审批编号无误。要FALSE
+#（也会有一个账号同时被多笔审批举报的情况，这种帮忙标记一下）
+#3.检查人审是否误对举报人账号添加标签 要TRUE
+#4.检查人审是否有对被举报人添加标签 要FALSE
+data_check_mingxi <- data_check_mingxi %>% select(-c(方向,打标方式))
+
+subset1 <- subset(data_check_mingxi, 举报类型和现存标签二级标签检查 == FALSE) #1.检查人选二级标签错误
+subset2 <- subset(data_check_mingxi, 审批编号是否在备注内 == FALSE) #2.备注错误添加对应审批编号
+subset2_2 <- data_check_mingxi %>%  filter(申请状态 != "已拒绝" & 申请状态 != "已撤回")
+duplicates <- duplicated(subset2_2$用户uid) | duplicated(subset2_2$用户uid, fromLast = TRUE)
+duplicate_rows <- which(duplicates)#找出一个账号多个跟进的
+subset2_2 <- subset2_2[duplicate_rows,]
+subset3 <- subset(data_check_mingxi, 举报人贴错标签 == TRUE) #3.误对举报人上签
+subset3 <- subset(subset3, !grepl("被盗希望冻结", 二级标签))
+subset4 <- subset(data_check_mingxi, 是否有对被举报人贴标签 == FALSE) #4.是否对被举报人添加标签
+subset4 <- subset(subset4, UID是否在追溯资金处置账户内 == FALSE) #4.是否对被举报人添加标签
+subset4 <- na.omit(subset4)
+
+# 使用 dplyr 包的 filter() 函数筛选出需要保留的行
+filtered_data <- data_check_mingxi %>%
+  group_by(用户uid) %>%
+  filter(!("审批中" %in% 申请状态)) ##把资料以用户uid来分组，只要出现“审批中”就直接删除全部相关uid的资料，只留下完全没有“审批中”的资料
+
+filtered_data <- filtered_data %>%
+  group_by(用户uid) %>%
+  filter(n() > 1) ##只留下有重复uid的资料
+
+# 创建一个 Excel 工作簿
+wb <- createWorkbook()
+
+addWorksheet(wb, "标签添加明细全资料")
+writeData(wb, "标签添加明细全资料", data_check_mingxi)
+
+addWorksheet(wb, "多个审批跟进的账号")
+writeData(wb, "多个审批跟进的账号", filtered_data) #subset2_2还是filtered_data?
+
+addWorksheet(wb, "二级标签与举报类型不一致")
+writeData(wb, "二级标签与举报类型不一致", subset1)
+
+addWorksheet(wb, "备注内错误添加对应审批编号")
+writeData(wb, "备注内错误添加对应审批编号", subset2)
+
+addWorksheet(wb, "误对举报人上标签")
+writeData(wb, "误对举报人上标签", subset3)
+
+addWorksheet(wb, "对被举报人添加错误标签")
+writeData(wb, "对被举报人添加错误标签", subset4)
+
+addWorksheet(wb, "未匹配审批跟进的标签添加明细")
+writeData(wb, "未匹配审批跟进的标签添加明细", data_not_selected)
+
+# 保存 Excel 文件
+date_today <- format(Sys.Date(),"%Y%m%d")
+name1 <- paste("Downloads/标签添加明细统计比对",date_today,".xlsx")
+saveWorkbook(wb, name1, overwrite = TRUE)
+
+
+##目前还差哪些？subset2_2的为什么要去掉已拒绝已撤回？
+
+
+
