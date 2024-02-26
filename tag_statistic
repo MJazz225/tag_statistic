@@ -10,6 +10,7 @@
 #######################################################################
 
 rm(list=ls())
+'单双引号都是注释，或者用#'
 
 library(readxl)
 library(dplyr)
@@ -23,9 +24,10 @@ names_list <- c('Jackson Zhao','Theo Zhang', 'Prince','Seven','Fruehling','futur
 
 wb <- loadWorkbook("Downloads/现存标签.xlsx") #现存标签
 wb1 <- loadWorkbook("Downloads/标签添加明细.xlsx") ##标签添加明细
-wb2 <- loadWorkbook("Downloads/举报异常资金(全部)20240209095420.xlsx") ##添加的标签
-#file_path <- "Downloads/小时工作量统计.xlsx" ##写入的档案名称
+wb2 <- loadWorkbook("Downloads/举报异常资金(全部)20240226060836.xlsx") ##添加的标签
+file_path <- "Downloads/小时工作量统计.xlsx" ##写入的档案名称
 
+"cma + a（全选）, cma + enter（全运行）"
 ############################################。资料导入。 ##################################################################################################################################################
 # 获取 Excel 文件中的所有 sheet 名称
 sheet_names <- names(wb)
@@ -52,15 +54,24 @@ all_data <- NULL
 for (sheet_name in 1:length(sheet_names)) {
   
   rawdata1 <- read.xlsx(wb2, sheet = sheet_name)  # 读取当前 sheet 的数据
-  colname <- rawdata1[1,]
-  rawdata1 <- rawdata1[-1,]
-  colnames(rawdata1) <- colname
+  if (rawdata1[1,1] == '申请编号') {
+    colname <- rawdata1[1,]
+    rawdata1 <- rawdata1[-1,]
+    colnames(rawdata1) <- colname
+    
+    rawdata1[,"发起时间"]<- as.POSIXct(rawdata1[,"发起时间"] %>% unlist() %>% as.numeric()*86400, origin = "1899-12-30", tz = "UTC") %>% as.data.frame()
+    data1 <- rawdata1[,c("申请编号","申请状态","发起时间","历史审批人","历史办理人","当前处理人","举报人/受害者的UID",
+                         "被举报账号/需处置账号的UID","举报类型","风控二审-实际处置的账号UID","风控二审-实际处置方式",
+                         "风控二审-追溯资金补充处置账户")]
+    all_data <- rbind(all_data,data1)
+  }else{
+    rawdata1[,"发起时间"]<- as.POSIXct(rawdata1[,"发起时间"] %>% unlist() %>% as.numeric()*86400, origin = "1899-12-30", tz = "UTC") %>% as.data.frame()
+    data1 <- rawdata1[,c("申请编号","申请状态","发起时间","历史审批人","历史办理人","当前处理人","举报人/受害者的UID",
+                         "被举报账号/需处置账号的UID","举报类型","风控二审-实际处置的账号UID","风控二审-实际处置方式",
+                         "风控二审-追溯资金补充处置账户")]
+    all_data <- rbind(all_data,data1)
+  }
 
-  rawdata1[,"发起时间"]<- as.POSIXct(rawdata1[,"发起时间"] %>% unlist() %>% as.numeric()*86400, origin = "1899-12-30", tz = "UTC") %>% as.data.frame()
-  data1 <- rawdata1[,c("申请编号","申请状态","发起时间","历史审批人","历史办理人","当前处理人","举报人/受害者的UID",
-                       "被举报账号/需处置账号的UID","举报类型","风控二审-实际处置的账号UID","风控二审-实际处置方式",
-                       "风控二审-追溯资金补充处置账户")]
-  all_data <- rbind(all_data,data1)
 
 }
 #write.xlsx(all_data, "Downloads/12月1日-12月26日举报异常资金.xlsx", digits = 2)
@@ -93,11 +104,23 @@ for (i in 1:length(id_count_one)) {
   
 }
 not_selected_ids <- setdiff(id_count_one, data_check_account_one$用户UID)
-data_not_selected <- data_now[data_now$用户UID %in% not_selected_ids,]
+data_not_selected <- data_now[data_now$用户UID %in% not_selected_ids,] 
+"上面的代码跑不成就一行一行跑，cmd + enter"
+
 # 使用正则表达式提取审批编号
 ID_beizhu <- gregexpr("202\\d+", data_not_selected$备注)
 ID_beizhu <- regmatches(data_not_selected$备注, ID_beizhu)
-ID_beizhu_cleaned <- sapply(ID_beizhu, function(x) substr(x, 1, 12)) %>% as.data.frame()
+tryCatch({
+  ID_beizhu_cleaned <- sapply(ID_beizhu, function(x) substr(x, 1, 12)) %>% as.data.frame()
+}, error = function(e) {
+  # 发生错误时的处理
+  # 可以输出错误信息或者进行其他处理
+  message("An error occurred: ", conditionMessage(e))
+  # 这里可以添加其他的处理逻辑，比如给出默认值、记录日志等
+  # 例如：
+  # ID_beizhu_cleaned <- data.frame()  # 给出一个空的数据框作为默认值
+})
+
 
 if (nrow(ID_beizhu_cleaned)>0) {
   colnames(ID_beizhu_cleaned) <- "备注里的审批编号"
@@ -217,10 +240,27 @@ data_not_selected <- data_withtag[data_withtag$用户uid %in% not_selected_ids,]
 # 使用正则表达式提取审批编号
 ID_beizhu <- gregexpr("202\\d+", data_not_selected$备注)
 ID_beizhu <- regmatches(data_not_selected$备注, ID_beizhu)
-ID_beizhu_cleaned <- sapply(ID_beizhu, function(x) substr(x, 1, 12)) %>% as.data.frame()
+tryCatch({
+  ID_beizhu_cleaned <- sapply(ID_beizhu, function(x) substr(x, 1, 12)) %>% as.data.frame()
+}, error = function(e) {
+  # 错误发生时什么都不做，直接略过
+})
+tryCatch({
+  colnames(ID_beizhu_cleaned) <- "备注里的审批编号"
+}, error = function(e) {
+  # 错误发生时什么都不做，直接略过
+})
 
-colnames(ID_beizhu_cleaned) <- "备注里的审批编号"
-data_not_selected <- cbind(data_not_selected, ID_beizhu_cleaned)
+# 尝试合并数据框，如果出现错误则执行备选方案
+tryCatch({
+  # 尝试合并数据框
+  data_not_selected <- cbind(data_not_selected, ID_beizhu_cleaned)
+}, error = function(e) {
+  # 如果出现错误，则打印错误信息并执行备选方案
+  print(paste("Error:", e))
+  # 执行备选方案，比如使用默认值或者其他处理方式
+  # 这里可以添加你想要执行的备选方案代码
+})
 
 data_check_mingxi <- bind_rows(data_check_mingxi, data_not_selected)
 
@@ -357,6 +397,6 @@ saveWorkbook(wb, name1, overwrite = TRUE)
 
 
 ##目前还差哪些？subset2_2的为什么要去掉已拒绝已撤回？
-
+'程式码结束了，可以查看excel档案'
 
 
